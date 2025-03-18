@@ -78,11 +78,12 @@ type ProtobufParser struct {
 
 	// Whether to also parse a classic histogram that is also present as a
 	// native histogram.
-	parseClassicHistograms bool
+	parseClassicHistograms  bool
+	enableTypeAndUnitLabels bool
 }
 
 // NewProtobufParser returns a parser for the payload in the byte slice.
-func NewProtobufParser(b []byte, parseClassicHistograms bool, st *labels.SymbolTable) Parser {
+func NewProtobufParser(b []byte, parseClassicHistograms bool, enableTypeAndUnitLabels bool, st *labels.SymbolTable) Parser {
 	return &ProtobufParser{
 		dec:        dto.NewMetricStreamingDecoder(b),
 		entryBytes: &bytes.Buffer{},
@@ -552,10 +553,22 @@ func (p *ProtobufParser) Next() (Entry, error) {
 // * p.fieldsDone depending on p.fieldPos.
 func (p *ProtobufParser) onSeriesOrHistogramUpdate() error {
 	p.builder.Reset()
-	p.builder.Add(labels.MetricName, p.getMagicName())
 
-	if err := p.dec.Label(&p.builder); err != nil {
-		return err
+	if p.enableTypeAndUnitLabels {
+		_, typ := p.Type()
+		p.builder.AddMetricIdentity(labels.MetricIdentity{
+			Name: p.getMagicName(),
+			Type: typ,
+			Unit: p.dec.GetUnit(),
+		})
+		if err := p.dec.Label(labels.IgnoreIdentityLabelsScratchBuilder{ScratchBuilder: &p.builder}); err != nil {
+			return err
+		}
+	} else {
+		p.builder.Add(labels.MetricName, p.getMagicName())
+		if err := p.dec.Label(&p.builder); err != nil {
+			return err
+		}
 	}
 
 	if needed, name, value := p.getMagicLabel(); needed {
